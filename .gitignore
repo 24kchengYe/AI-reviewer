@@ -1,0 +1,26 @@
+# 环境变量和敏感信息
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+AIreviewer/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 项目生成的文件
+material/review*/
+response/
+
+# 临时文件
+*.tmp
+*.log

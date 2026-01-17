@@ -150,17 +150,19 @@ class ReviewSystem:
             print("已取消操作")
             return
 
-        # 获取review编号并创建文件夹
-        review_number = self.folder_manager.get_next_review_number()
-        material_review_path, response_review_path = self.folder_manager.create_review_folders(review_number)
-
-        print(f"\n已创建 review{review_number} 文件夹")
-
         # 处理每个文档
         success_count = 0
         fail_count = 0
+        review_numbers = []  # 记录所有创建的review编号
 
         for file_path in unprocessed_files:
+            # 为每个文档创建独立的review文件夹
+            review_number = self.folder_manager.get_next_review_number()
+            material_review_path, response_review_path = self.folder_manager.create_review_folders(review_number)
+            review_numbers.append(review_number)
+
+            print(f"\n为 {file_path.name} 创建 review{review_number} 文件夹")
+
             success = self.process_document(
                 file_path,
                 review_number,
@@ -180,8 +182,8 @@ class ReviewSystem:
         print(f"成功: {success_count} 个")
         print(f"失败: {fail_count} 个")
         print(f"\n结果保存在:")
-        print(f"  - 原文档: material/review{review_number}/")
-        print(f"  - 审稿结果: response/review{review_number}/")
+        for review_num in review_numbers:
+            print(f"  - review{review_num}: material/review{review_num}/ 和 response/review{review_num}/")
 
 
 def main():

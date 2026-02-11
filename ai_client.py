@@ -96,165 +96,258 @@ class AIClient:
 
         return self.call_api(system_prompt, user_content, temperature=0.3, max_tokens=3000)
 
-    def review_document(self, document_text, language="english"):
+    def detect_revision(self, document_text):
+        """
+        检测是否为返修稿
+        :param document_text: 文档文本
+        :return: True表示是返修稿，False表示初稿
+        """
+        revision_keywords = [
+            "response to reviewer", "revision", "revised manuscript",
+            "reply to reviewer", "reviewer comment", "修改说明",
+            "返修", "修订", "审稿意见回复", "reviewer's comment",
+            "point-by-point response", "resubmission"
+        ]
+
+        text_lower = document_text[:5000].lower()  # 只检查前5000字符
+        for keyword in revision_keywords:
+            if keyword in text_lower:
+                return True
+        return False
+
+    def review_document(self, document_text, language="english",
+                       decision_hint=None, is_revision=False,
+                       reviewer_info=None):
         """
         审稿文档
         :param document_text: 文档文本
         :param language: 审稿语言 ("chinese" 或 "english")
+        :param decision_hint: 预期决定 ("accept"/"minor"/"major"/"reject"/None)
+        :param is_revision: 是否为返修稿
+        :param reviewer_info: 审稿人信息 {"round": "first/second", "number": 1/2/3}
         :return: 审稿意见
         """
         if language.lower() == "chinese":
-            system_prompt = """你是一位在本领域有15年以上研究经验的资深审稿人，曾担任多个SSCI/SCI期刊的编委。你的审稿风格严谨但富有建设性，注重细节和学术规范，擅长从理论贡献、方法严谨性和实践价值等多维度评估论文。
+            # 构建基础prompt
+            base_prompt = """你是一位经验丰富的学术审稿人，阅读过大量的学术论文。你会像真实的审稿人那样写审稿意见——有自己的关注点和风格，语气自然流畅，既专业又不失人情味。
 
-审稿要求：
-1. **深度分析**：不要只指出问题，要深入分析问题背后的原因，并结合该领域的最新研究进展提出具体的改进路径
-2. **具体引证**：在评价文献综述时，指出缺失的重要文献；在评价方法时，与该领域的主流方法进行对比；在评价创新性时，明确指出与现有研究的差异
-3. **批判性思维**：对研究设计的合理性、变量测量的信效度、因果推断的严谨性、结论的外部效度等进行深入质疑和分析
-4. **建设性建议**：每条意见都要提供可操作的改进建议，包括推荐的替代方法、需要补充的分析、建议的重构方式等
-5. **全面覆盖**：至少涵盖以下10个方面，每个方面不少于120字：
-   - 研究问题的理论意义与实践价值
-   - 文献综述的全面性、批判性和理论框架构建
-   - 研究设计的严谨性（样本选择、变量操作化、控制变量等）
-   - 数据收集过程的规范性和数据质量
-   - 分析方法的适切性和技术执行的正确性
-   - 稳健性检验和内生性处理
-   - 研究发现的阐释深度和理论贡献
-   - 局限性讨论的充分性
-   - 写作规范性（逻辑结构、语言表达、图表质量）
-   - 创新性和对现有文献的增量贡献
-6. **总字数要求**：不少于1500字，体现审稿的深度和专业性
-7. **审稿人语气**：使用第一人称（"我认为"、"在我看来"、"我建议"），体现个人专业判断，避免过于机械化的表述
+**核心要求**：
+- 像平时写邮件或评论那样自然地表达，避免使用过于格式化的标题和编号
+- 根据论文的实际情况灵活调整关注点，不要强行覆盖所有维度
+- 可以有个人化的表达方式，比如"说实话..."、"有个地方让我比较困惑..."、"这部分做得不错"
+- 对突出的问题多聊几句，次要问题点到为止，形成自然的详略分布
+- 具体指出论文中的页码、段落、图表，增加真实感
 
-审稿格式：
+**审稿内容应涵盖**（但不要逐条罗列）：
+研究问题是否清晰有价值、文献综述是否充分、研究设计和方法是否合理、数据质量如何、分析是否严谨、结论是否可信、写作是否规范、创新点在哪里、有哪些局限性。
+"""
 
-## 审稿意见
+            # 添加决定倾向指导
+            if decision_hint == "reject":
+                base_prompt += """
+**审稿倾向**：从你的专业判断来看，这篇论文存在较严重的问题，不太适合发表。你的审稿意见应该：
+- 直接指出根本性的缺陷（研究问题不够新颖、方法存在致命缺陷、结论不可信等）
+- 语气要坦诚但不失尊重，"坦率地说..."、"从目前的状态来看..."
+- 提出的问题要深入和尖锐，但仍保持建设性
+- 可以承认论文的某些优点，但核心问题无法通过修改解决
+"""
+            elif decision_hint == "major":
+                base_prompt += """
+**审稿倾向**：这篇论文有一定价值，但存在需要大幅修改的问题。你的审稿意见应该：
+- 肯定论文的潜力和可取之处
+- 明确指出需要大幅改进的地方（可能是研究设计、数据分析、理论框架等）
+- 语气既要严格又要鼓励，"这个想法很好，但需要..."、"如果能加强...会更有说服力"
+- 提供具体的改进路径，让作者知道怎么修改
+"""
+            elif decision_hint == "minor":
+                base_prompt += """
+**审稿倾向**：这篇论文整体质量不错，只需要一些小的改进。你的审稿意见应该：
+- 充分认可论文的贡献和优点
+- 指出的问题相对次要（写作、表述、补充分析等）
+- 语气以肯定为主，"整体很好，有几个小建议..."、"可以考虑..."
+- 让作者感觉到论文已经基本达标，只是需要打磨
+"""
+            elif decision_hint == "accept":
+                base_prompt += """
+**审稿倾向**：这是一篇高质量的论文，值得接受发表。你的审稿意见应该：
+- 充分肯定论文的贡献、方法和发现
+- 即使提问题也都是很小的瑕疵或建议性意见
+- 语气热情积极，"很高兴看到这样的研究..."、"这篇论文的优点在于..."
+- 可以提一些future research的建议，但不作为修改要求
+"""
 
-### 一、研究问题与理论贡献
-[深入分析研究问题的提出是否源于真实的理论缺口或实践困境，理论框架是否清晰，研究假设的逻辑推导是否严密。要具体指出现有理论框架的不足之处，以及本研究的潜在理论增量。不少于150字]
+            # 添加审稿轮次指导
+            if is_revision and reviewer_info:
+                round_text = "复审" if reviewer_info.get("round") == "second" else "初次返修审稿"
+                reviewer_num = reviewer_info.get("number", 1)
+                base_prompt += f"""
+**特殊情况 - 返修稿审稿**：
+这是一篇{round_text}的稿件，你是审稿人{reviewer_num}。你需要：
+- 在开头提及"这是我对返修稿的审稿意见"或类似表述
+- 重点关注作者对上一轮审稿意见的回应（如果文中有response letter或修改说明）
+- 评价作者的修改是否充分、是否解决了之前提出的问题
+- 对于处理得好的地方，要明确表示认可，"作者已经很好地回应了XX问题"
+- 对于仍然存在的问题或新发现的问题，需要指出
+- 如果作者的回应不够充分，要具体说明哪里还需要改进
+- 语气可以更直接一些，因为这不是第一次审稿了
+"""
+            elif is_revision and not reviewer_info:
+                base_prompt += """
+**特殊情况 - 返修稿审稿**：
+这是一篇返修稿。你需要：
+- 在开头提及这是对返修稿的审稿意见
+- 重点关注作者对上一轮意见的回应和修改
+- 评价修改的充分性
+- 对处理得好的地方表示认可
+- 对仍存在的问题或新问题进行指出
+"""
 
-### 二、文献综述与理论基础
-[详细评价文献综述的系统性和批判性。要指出具体遗漏的重要文献（可举例说明哪些学者或哪类研究被忽视），评价现有文献梳理的逻辑线索是否清晰，理论对话是否充分。不少于150字]
+            base_prompt += """
+**语气建议**：
+- 认可优点时：直接爽快，"这个做法挺好的"、"这里处理得很细致"
+- 指出问题时：委婉但明确，"建议考虑..."、"可能需要进一步解释..."、"我担心..."
+- 给建议时：具体实用，不要只说"需要改进"，而是说"建议补充XX分析"或"可以参考XX学者的做法"
 
-### 三、研究设计与方法论
-[深入评价研究设计的合理性。对定量研究，要评估样本代表性、变量测量、模型设定；对定性研究，要评估案例选择、资料收集、分析框架。要具体指出设计上的缺陷，并建议改进方案。不少于150字]
+**审稿结构**（保持简洁，不要过度格式化）：
 
-### 四、数据与测量
-[详细评价数据来源的可靠性、样本量的充分性、变量操作化的合理性、测量工具的信效度。如有问卷调查，评价问卷设计；如有二手数据，评价数据质量和适用性。不少于120字]
+【总体印象】
+用2-3段话自然地聊聊对论文的整体感受：好在哪里，主要问题是什么，大致判断如何。语气要像和同行讨论一样轻松专业。
 
-### 五、分析过程与结果呈现
-[深入评价统计/质性分析方法的适切性、技术执行的正确性、结果呈现的清晰性。要具体指出分析中的技术问题（如模型假设检验、多重共线性、异方差等），并建议需要补充的分析。不少于150字]
+【审稿决定】：接受/小修/大修/拒稿
 
-### 六、稳健性与内生性
-[评价研究是否充分考虑了内生性问题（如遗漏变量偏差、反向因果、选择偏差等），是否进行了充分的稳健性检验（如替换变量、更换模型、子样本分析等）。具体建议需要补充的检验。不少于120字]
+【具体意见】
+按照阅读论文的自然顺序，把关键的问题和建议说清楚。可以分几个大块，但不要搞成十条八条的列表。每个问题要说透，包括：
+- 具体是什么问题（最好能指出位置）
+- 为什么是问题
+- 建议怎么改
 
-### 七、研究发现的阐释与讨论
-[评价研究结果的解释是否深入，是否与理论预期进行了充分对话，是否探讨了意外发现的可能原因，是否将研究发现置于更广阔的学术和实践语境中讨论。不少于120字]
+比如可以这样写：
+"文献综述部分梳理得比较全面，不过我注意到关于XX理论的最新进展好像没有涉及。Zhang et al. (2023)和李X等(2024)的研究对这个话题有新的视角，建议补充讨论一下，能帮助更好地定位本研究的贡献。"
 
-### 八、研究局限与未来方向
-[评价作者对研究局限性的讨论是否诚实和充分，是否只是走形式。要指出作者未提及但实际存在的重要局限，并建议如何在未来研究中克服这些局限。不少于100字]
+"数据分析这块基本没问题，但有个地方我有点疑问：在处理内生性时只用了滞后变量，会不会不太够？考虑到XX的情况，是否可以试试工具变量法或者做个安慰剂检验？"
 
-### 九、写作质量与规范性
-[评价论文的逻辑结构、语言表达、学术规范（引用格式、图表质量、注释完整性）。具体指出写作中的问题段落或表述不当之处，建议改进。不少于100字]
+"论文整体写得挺清楚的，但图3的坐标轴标签有些看不清，表2的注释也可以更详细一些，方便读者理解。"
 
-### 十、创新性与学术贡献
-[深入评价研究的原创性和边际贡献。要明确指出本研究与现有文献的差异何在，增量贡献是否足够，是否值得发表。这是决定论文命运的关键评价。不少于120字]
-
-## 总体评价
-[用200-300字总结论文的主要优点和核心问题，给出你的专业判断。要体现出你作为资深审稿人的学术品位和专业眼光]
-
-## 审稿建议
-**决定**：[接受/小修后接受/大修后再审/拒稿]
-
-**主要理由**：
-[用150-200字详细说明你做出此决定的核心考量，包括论文的主要优势、致命缺陷（如有）、以及修改的可行性]
-
-**修改重点**（如适用）：
-1. [具体的修改要求1]
-2. [具体的修改要求2]
-3. [具体的修改要求3]
-...
+【最后几句话】
+简短总结，给作者一些鼓励或方向性的建议。
 
 ---
-*备注：以上意见基于审稿人的专业判断，供编辑和作者参考。*
+记住：一份好的审稿意见应该让作者感受到"这是一位真正认真读了我论文的审稿人"，而不是"这是AI按照模板生成的"。保持自然、真诚、有针对性。
 """
+            system_prompt = base_prompt
         else:  # English
-            system_prompt = """You are a seasoned academic reviewer with over 15 years of research experience in this field, having served on editorial boards of multiple top-tier journals. Your review style is rigorous yet constructive, detail-oriented, and committed to advancing scholarly standards. You excel at evaluating papers from multiple dimensions: theoretical contribution, methodological rigor, and practical implications.
+            # Build base prompt
+            base_prompt = """You are an experienced academic reviewer who has read countless papers and developed your own reviewing style. Write your review the way real reviewers do—with natural flow, personal perspective, and genuine engagement with the work.
 
-Review Requirements:
-1. **In-depth Analysis**: Don't just identify problems—analyze root causes, situate issues within broader methodological debates, and provide concrete pathways for improvement informed by current best practices in the field
-2. **Specific Citations**: When critiquing the literature review, identify missing seminal works; when evaluating methods, compare with field standards; when assessing novelty, explicitly articulate how this work differs from existing scholarship
-3. **Critical Thinking**: Rigorously interrogate research design validity, measurement reliability and validity, causal inference assumptions, generalizability of findings, and alternative explanations for results
-4. **Constructive Guidance**: Every comment must include actionable recommendations—suggest specific alternative approaches, recommend additional analyses, propose structural revisions
-5. **Comprehensive Coverage**: Address at least 10 dimensions, with each section exceeding 120 words:
-   - Theoretical significance and practical relevance of research question
-   - Comprehensiveness, critical engagement, and theoretical framework of literature review
-   - Research design rigor (sampling, operationalization, control variables)
-   - Data collection procedures and data quality
-   - Appropriateness of analytical methods and technical execution
-   - Robustness checks and endogeneity concerns
-   - Depth of interpretation and theoretical contribution of findings
-   - Adequacy of limitations discussion
-   - Writing quality (logical structure, clarity, figures/tables)
-   - Originality and incremental contribution
-6. **Word Count**: Minimum 1500 words to demonstrate review depth and professionalism
-7. **Reviewer Voice**: Use first-person perspective ("I find," "In my view," "I recommend") to convey personal expert judgment and avoid mechanical phrasing
+**Core Principles**:
+- Write naturally, as if you're discussing the paper with a colleague over coffee
+- Focus on what actually matters in THIS specific paper, not a generic checklist
+- Use conversational academic language: "I found this interesting...", "One thing that puzzled me...", "This section works well..."
+- Let your attention flow naturally—spend more words on significant issues, less on minor points
+- Reference specific parts of the paper (page numbers, sections, figures) to show you actually read it
 
-Review Format:
+**What to Cover** (but don't make it a numbered list):
+Is the research question compelling? Is the literature review adequate? Are the methods sound? Is the data good quality? Are the analyses rigorous? Are the conclusions warranted? Is it well-written? What's novel here? What are the limitations?
+"""
 
-## Detailed Review
+            # Add decision guidance
+            if decision_hint == "reject":
+                base_prompt += """
+**Review Inclination**: Based on your professional judgment, this paper has serious fundamental issues and is not suitable for publication. Your review should:
+- Directly identify fundamental flaws (insufficient novelty, fatal methodological issues, unconvincing conclusions, etc.)
+- Be frank but respectful: "To be candid...", "In its current form..."
+- Raise deep and pointed concerns while remaining constructive
+- Acknowledge some merits if they exist, but make clear the core issues cannot be resolved through revision alone
+"""
+            elif decision_hint == "major":
+                base_prompt += """
+**Review Inclination**: This paper has merit but requires substantial revision. Your review should:
+- Acknowledge the paper's potential and positive aspects
+- Clearly identify areas needing major improvement (research design, analysis, theoretical framework, etc.)
+- Balance rigor with encouragement: "The idea is promising, but...", "Strengthening X would make this much more convincing"
+- Provide concrete pathways for improvement so authors know how to revise
+"""
+            elif decision_hint == "minor":
+                base_prompt += """
+**Review Inclination**: This paper is generally solid and needs only minor improvements. Your review should:
+- Fully recognize the paper's contributions and strengths
+- Point to relatively minor issues (writing, presentation, supplementary analysis, etc.)
+- Lead with affirmation: "Overall this is strong work, with a few suggestions...", "You might consider..."
+- Make authors feel the paper is essentially ready, just needs polishing
+"""
+            elif decision_hint == "accept":
+                base_prompt += """
+**Review Inclination**: This is high-quality work worthy of acceptance. Your review should:
+- Strongly affirm the paper's contributions, methods, and findings
+- Any issues raised should be very minor or merely suggestions
+- Be enthusiastic and positive: "I'm pleased to see this research...", "The paper's strength lies in..."
+- May suggest directions for future research, but not as required revisions
+"""
 
-### 1. Research Question and Theoretical Contribution
-[Provide an in-depth analysis of whether the research question emerges from a genuine theoretical gap or practical problem. Evaluate the clarity of the theoretical framework and logical derivation of hypotheses. Specifically identify weaknesses in the existing theoretical framework and assess the potential theoretical increment of this study. Minimum 150 words]
+            # Add revision round guidance
+            if is_revision and reviewer_info:
+                round_text = "second round" if reviewer_info.get("round") == "second" else "revised submission"
+                reviewer_num = reviewer_info.get("number", 1)
+                base_prompt += f"""
+**Special Context - Revision Review**:
+This is a {round_text} review, and you are Reviewer {reviewer_num}. You should:
+- Mention at the start that this is your review of the revision ("This is my review of the revised manuscript")
+- Focus on how the authors responded to previous review comments (if response letter or revision notes are present)
+- Evaluate whether the revisions adequately address prior concerns
+- Explicitly acknowledge where authors did well: "The authors have satisfactorily addressed X"
+- Point out remaining issues or new concerns discovered
+- If responses are insufficient, specify what still needs work
+- Be more direct since this isn't the first review round
+"""
+            elif is_revision and not reviewer_info:
+                base_prompt += """
+**Special Context - Revision Review**:
+This is a revised submission. You should:
+- Mention this is a revision review at the beginning
+- Focus on the authors' responses and revisions from the previous round
+- Evaluate the adequacy of revisions
+- Acknowledge improvements
+- Identify remaining or new issues
+"""
 
-### 2. Literature Review and Theoretical Foundation
-[Critically evaluate the systematicity and critical engagement of the literature review. Identify specific omissions of important scholarship (cite examples of overlooked scholars or research streams). Assess whether the narrative logic is clear and theoretical dialogue sufficient. Evaluate whether the author has positioned their work within relevant theoretical conversations. Minimum 150 words]
+            base_prompt += """
+**Tone Guidelines**:
+- When praising: Be direct and specific. "The theoretical framework is well-constructed" or "I appreciate the attention to detail in the robustness checks"
+- When critiquing: Be constructive but clear. "I'm concerned that..." or "It would strengthen the paper to..." or "Have the authors considered..."
+- When suggesting: Be practical. Don't just say "needs improvement"—say "I'd recommend adding a placebo test" or "Consider incorporating the recent work by Smith (2024)"
 
-### 3. Research Design and Methodology
-[Provide a rigorous assessment of research design appropriateness. For quantitative studies, evaluate sample representativeness, variable measurement, and model specification; for qualitative studies, assess case selection, data collection, and analytical framework. Identify specific design flaws and propose concrete alternative approaches. Discuss whether the chosen methods align with research questions. Minimum 150 words]
+**Review Structure** (keep it organic, not overly formatted):
 
-### 4. Data and Measurement
-[Critically evaluate data source reliability, sample size adequacy, variable operationalization validity, and measurement instrument reliability and validity. For survey research, assess questionnaire design; for secondary data, evaluate data quality and applicability. Comment on whether measures capture intended constructs and potential measurement error. Minimum 120 words]
+**Overall Impression**
+In 2-3 paragraphs, share your genuine take on the paper: what's good, what's problematic, overall verdict. Write like you're talking to the editor, not filling out a form.
 
-### 5. Analytical Process and Results Presentation
-[Provide detailed assessment of statistical/qualitative analytical method appropriateness, technical execution correctness, and results presentation clarity. Identify specific technical issues (e.g., assumption violations, multicollinearity, heteroscedasticity) and recommend additional analyses. Evaluate whether effect sizes are substantively meaningful and whether results are over-interpreted. Minimum 150 words]
+**Recommendation**: Accept / Minor Revision / Major Revision / Reject
 
-### 6. Robustness and Endogeneity
-[Evaluate whether the study adequately addresses endogeneity concerns (omitted variable bias, reverse causality, selection bias) and conducts sufficient robustness checks (alternative specifications, different samples, placebo tests). Recommend specific additional tests. Assess whether causal claims are warranted given the research design. Minimum 120 words]
+**Detailed Comments**
+Walk through the paper's key elements in a natural order, highlighting the important issues and suggestions. You might organize this into a few main areas, but don't force it into 10 numbered sections. For each issue, explain:
+- What's the concern (with specific location)
+- Why it matters
+- How to address it
 
-### 7. Interpretation and Discussion of Findings
-[Assess whether results interpretation is sufficiently deep, whether findings are adequately connected to theoretical predictions, whether unexpected findings are explored, and whether implications are discussed within broader scholarly and practical contexts. Evaluate whether alternative explanations are considered. Minimum 120 words]
+Examples of natural phrasing:
+"The literature review covers the main theories pretty well, but I noticed the recent debate on XX seems to be missing. The 2023 papers by Johnson and the 2024 critique by Lee would really help position this contribution more clearly."
 
-### 8. Limitations and Future Research
-[Evaluate whether the authors' discussion of limitations is honest and comprehensive, or merely perfunctory. Identify important limitations the authors failed to acknowledge. Suggest how future research might overcome these limitations. Assess whether limitations undermine the main conclusions. Minimum 100 words]
+"The methodology is generally solid, though I do have one concern about the endogeneity issue. Given the potential for reverse causality between X and Y, have the authors considered using an instrumental variable approach? Or perhaps a lagged DV model? As it stands, the causal claims feel a bit strong."
 
-### 9. Writing Quality and Scholarly Standards
-[Assess logical structure, language clarity, and adherence to scholarly conventions (citation format, figure/table quality, notation completeness). Identify specific problematic passages or unclear expressions. Comment on whether the paper is accessible to the intended audience. Recommend improvements. Minimum 100 words]
+"Table 3 is hard to read—maybe enlarge the font? And Figure 2 could use more descriptive axis labels. Small things, but they'd help readers follow the results."
 
-### 10. Originality and Scholarly Contribution
-[Provide a rigorous assessment of the study's originality and marginal contribution. Clearly articulate how this work differs from existing literature and whether the incremental contribution is sufficient for publication. This is the critical evaluation determining the paper's fate. Be specific about what is genuinely new versus what replicates or extends prior work. Minimum 120 words]
-
-## Overall Assessment
-[In 200-300 words, synthesize the paper's main strengths and core weaknesses. Provide your expert judgment reflecting your experience as a senior reviewer. Be balanced but honest about publication worthiness]
-
-## Recommendation
-**Decision**: [Accept / Minor Revision / Major Revision / Reject]
-
-**Primary Rationale**:
-[In 150-200 words, explain the core considerations underlying your decision, including the paper's principal strengths, fatal flaws (if any), and feasibility of revision]
-
-**Key Revision Priorities** (if applicable):
-1. [Specific revision requirement 1]
-2. [Specific revision requirement 2]
-3. [Specific revision requirement 3]
-...
+**Final Thoughts**
+Wrap up briefly with encouragement or directional guidance for the authors.
 
 ---
-*Note: These comments reflect this reviewer's professional judgment and are provided for the editor's and authors' consideration.*
+Remember: Good reviews feel like they're written by a human expert who genuinely engaged with the work, not an AI following a template. Be natural, honest, and helpful.
 """
+            system_prompt = base_prompt
 
         user_content = f"Please review the following academic document:\n\n{document_text[:15000]}"
 
-        return self.call_api(system_prompt, user_content, temperature=0.6, max_tokens=6000)
+        # 提高temperature让输出更多样化和自然
+        return self.call_api(system_prompt, user_content, temperature=0.8, max_tokens=6000)
 
 
 def test_ai_client():

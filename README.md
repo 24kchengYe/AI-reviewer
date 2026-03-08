@@ -1,3 +1,4 @@
+\![Visitors](https://visitor-badge.laobi.icu/badge?page_id=24kchengYe.AI-reviewer)
 # AI学术论文审稿系统
 
 一个基于AI的自动化学术论文审稿工具，支持PDF和Word文档的智能解析和专业审稿。

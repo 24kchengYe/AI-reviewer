@@ -1,5 +1,8 @@
 \![Visitors](https://visitor-badge.laobi.icu/badge?page_id=24kchengYe.AI-reviewer)
-# AI学术论文审稿系统
+# AI Academic Paper Reviewer
+### AI学术论文审稿系统
+
+> Automated academic paper review powered by AI. Simulates a senior reviewer with 15+ years of experience, generating 1500+ word structured reviews across 10 dimensions. Supports PDF & Word.
 
 一个基于AI的自动化学术论文审稿工具，支持PDF和Word文档的智能解析和专业审稿。
 
